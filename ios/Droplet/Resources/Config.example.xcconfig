@@ -1,0 +1,4 @@
+// Template for Config.xcconfig (gitignored). Generate the real file with scripts/make-ios-config.sh.
+// xcconfig treats a double slash as a comment, so the URL's scheme separator is written :/$()/
+SUPABASE_URL = https:/$()/your-project-ref.supabase.co
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_replace_me
