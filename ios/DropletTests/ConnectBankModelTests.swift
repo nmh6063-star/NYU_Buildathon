@@ -52,4 +52,19 @@ struct ConnectBankModelTests {
         model.handleExit(errorMessage: nil)
         #expect(model.error == nil)
     }
+
+    /// Plaid sends displayMessage "" for errors that are not user-actionable; never show a blank banner.
+    @Test(arguments: ["", "   ", "\n\t "])
+    func exitWithBlankErrorShowsFallback(_ blank: String) {
+        let model = ConnectBankModel(api: PreviewDropletAPI(hasBank: false))
+        model.handleExit(errorMessage: blank)
+        #expect(model.phase == .idle)
+        #expect(model.error?.message == ConnectBankModel.linkFallbackMessage)
+    }
+
+    @Test func exitTrimsTheLinkErrorMessage() {
+        let model = ConnectBankModel(api: PreviewDropletAPI(hasBank: false))
+        model.handleExit(errorMessage: "  The institution is down.\n")
+        #expect(model.error?.message == "The institution is down.")
+    }
 }

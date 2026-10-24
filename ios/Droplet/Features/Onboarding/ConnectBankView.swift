@@ -172,7 +172,12 @@ struct ConnectBankView: View {
                 }
             },
             onExit: { @Sendable exit in
-                let message = exit.error?.displayMessage ?? exit.error?.errorMessage
+                // First non-blank of displayMessage, errorMessage. "" when there is an error with no usable
+                // text, so the model shows its fallback. nil only when Link closed without an error.
+                let message = exit.error.map { error in
+                    [error.displayMessage, error.errorMessage].compactMap { $0 }
+                        .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? ""
+                }
                 Task { @MainActor in
                     model.handleExit(errorMessage: message)
                 }

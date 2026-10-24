@@ -44,8 +44,18 @@ import Observation
         }
     }
 
+    /// Shown when Link exits with an error that has no usable text (Plaid sends "" when it is not user-actionable).
+    static let linkFallbackMessage = "Couldn't connect your bank. Please try again."
+
+    /// `errorMessage` is nil when Link closed without an error, so no banner shows.
+    /// A blank message still means an error, so it shows `linkFallbackMessage` instead of an empty banner.
     func handleExit(errorMessage: String?) {
         phase = .idle
-        error = errorMessage.map { UserFacingError(message: $0) }
+        guard let errorMessage else {
+            error = nil
+            return
+        }
+        let trimmed = errorMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        error = UserFacingError(message: trimmed.isEmpty ? Self.linkFallbackMessage : trimmed)
     }
 }
