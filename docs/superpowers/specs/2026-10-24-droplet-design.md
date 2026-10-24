@@ -41,18 +41,18 @@ iOS app ──supabase-swift──► Supabase Auth (email/password)
 ```
 ios/
   project.yml                 # XcodeGen spec (app + unit test targets, SPM deps)
-  Droplet/
-    App/            DropletApp.swift, RootView.swift, AppModel.swift
-    Core/           SupabaseClient+Droplet.swift, DropletAPI.swift (protocol),
-                    LiveDropletAPI.swift, PreviewDropletAPI.swift, Models.swift,
-                    Money.swift, Config.swift
-    Design/         Theme.swift (colors, type, springs), DropGauge.swift, components
+  Droplet/          (exact file list: docs/superpowers/plans/2026-10-24-droplet.md → File Structure)
+    App/            DropletApp.swift, RootView.swift, MainTabs.swift, AppModel.swift, DropletStore.swift
+    Core/           DropletAPI.swift (protocol), LiveDropletAPI.swift, PreviewDropletAPI.swift,
+                    Models.swift, Coding.swift, Money.swift, UserFacingError.swift, AppConfig.swift
+    Design/         Theme.swift (colors, type, springs), DropShape.swift, DropGauge.swift
     Features/
       Auth/         AuthView.swift, AuthModel.swift
       Onboarding/   ConnectBankView.swift (LinkKit), ConnectBankModel.swift
-      Portfolio/    PortfolioView.swift, PortfolioModel.swift
-      Spending/     SpendingView.swift, SpendingModel.swift, TransactionRow.swift
-      Profile/      ProfileView.swift, ProfileModel.swift, AssetPicker.swift
+      Portfolio/    PortfolioView.swift, AllocationChart.swift, HoldingRow.swift
+      Spending/     SpendingView.swift, TransactionRow.swift
+      Profile/      ProfileView.swift, TestPurchaseSheet.swift
+      Shared/       NextDropPill.swift
     Resources/      Assets.xcassets, Config.xcconfig values via Info.plist
   DropletTests/     Swift Testing suites
 supabase/
@@ -88,7 +88,9 @@ created_at timestamptz not null default now()
 -- public.assets  (curated, seeded; read-only to clients)
 symbol text pk, name text, chain text, tm_asset_id uuid, icon_url text, sort_order int, enabled boolean
 
--- app_private.plaid_items  (NO client access: schema not exposed, RLS on, no policies)
+-- public.plaid_items  (NO client access: RLS on, no policies, all grants revoked from anon/authenticated.
+--   Kept in `public` so Edge Functions can reach it through PostgREST with the service role;
+--   pgTAP proves clients get 42501.)
 id uuid pk, user_id uuid unique references auth.users on delete cascade
 item_id text unique not null, access_token text not null, cursor text
 institution_name text, status text not null default 'active'   -- active | login_required | error
@@ -129,8 +131,8 @@ user_id, pending_cents, threshold_cents, lifetime_roundup_cents, invested_cents
 - Every public table has RLS enabled.
 - `authenticated` gets `select` on its own rows (`(select auth.uid()) = user_id`, or `= id` for profiles) and on `assets`.
 - `update` on `profiles` only for `display_name`, `threshold_cents`, `target_asset` and `roundups_paused`.
-- Clients **never** insert into `transactions` or `investments`. Only Edge Functions (service role) write them.
-- `app_private` is not in the exposed PostgREST schemas.
+- Clients **never** insert into `transactions` or `investments`. Only Edge Functions (service role) write them, through the `security definer` RPCs `apply_transactions` and `sweep_drops`, which only `service_role` may execute.
+- `plaid_items` has RLS on with no policies and no client grants. The views are select-only for `authenticated`.
 
 ## 4. Round-up and invest rules
 
@@ -180,10 +182,10 @@ The Edge Function gets the price **before** calling the RPC:
 | Function | Auth | Request | Response |
 |---|---|---|---|
 | `plaid-link-token` | user JWT | `{}` | `{ link_token, expiration }`. Calls `/link/token/create` with `products:["transactions"]`, `country_codes:["US"]`, `client_user_id = user.id`, `webhook = PLAID_WEBHOOK_URL`, `transactions.days_requested = 30`. |
-| `plaid-exchange` | user JWT | `{ public_token, institution_name }` | `{ ok: true, synced: n }`. Exchanges the token, upserts `plaid_items` and `bank_connections`, runs sync. |
+| `plaid-exchange` | user JWT | `{ public_token, institution_name }` | The sync result `{ added, modified, removed, investment }`. Exchanges the token, upserts `plaid_items` and `bank_connections`, runs sync. |
 | `plaid-sync` | user JWT | `{}` | `{ added, modified, removed, investment: Investment \| null }` |
 | `plaid-webhook` | none (`verify_jwt=false`), verifies `Plaid-Verification` ES256 JWT | Plaid payload | `200`. On `TRANSACTIONS / SYNC_UPDATES_AVAILABLE`, syncs the matching item. |
-| `sync-all` | secret key (`verify_jwt=false`, checks `apikey` == service key) | `{}` | Syncs all `active` items. Called by pg_cron every 15 min. |
+| `sync-all` | shared secret (`verify_jwt=false`; header `x-cron-secret` must equal the `CRON_SECRET` function secret, compared in constant time; pg_cron reads the same value from Vault) | `{}` | `{ items, failed }`. Syncs all `active` items. Called by pg_cron every 15 min. |
 | `simulate-purchase` | user JWT, only when `PLAID_ENV=sandbox` | `{ merchant, amount_cents }` | Calls `/sandbox/transactions/create` (posted today; works on any Sandbox item, and the rows appear on the next `/transactions/sync`), then sync. Returns the sync result. |
 
 Shared behavior:
@@ -198,7 +200,8 @@ Shared behavior:
   - Auth state comes from `supabase.auth.authStateChanges`.
   - Routing: `.signedOut → AuthView`, `.needsBank → ConnectBankView`, `.ready → MainTabs`.
 - **API layer:** a `DropletAPI` protocol with `LiveDropletAPI` (Supabase) and `PreviewDropletAPI` (in-memory fixtures for previews and tests). Feature models take the protocol.
-- **Shared summary:** `MainTabs` owns one `DropSummary`, refreshed on appear, on pull-to-refresh, after a simulated purchase, and when the app returns to the foreground.
+- **Shared store:** the three tabs share one `@Observable DropletStore`, which holds the profile, assets, bank, `DropSummary`, transactions and holdings. It is refreshed on appear, on pull-to-refresh, after a simulated purchase, and when the app returns to the foreground. This replaces separate per-tab models.
+- **Other models:** `AuthModel` and `ConnectBankModel` drive the two onboarding screens.
 
 ```swift
 protocol DropletAPI: Sendable {
@@ -272,6 +275,7 @@ protocol DropletAPI: Sendable {
   - Network loss shows "You're offline". Previously loaded data stays visible.
 - **Plaid:**
   - `login_required` surfaces in Profile and as a banner on Spending.
+  - "Reconnect bank" runs a fresh Link session, not Plaid update mode. The new Item replaces the old one, with `linked_on` reset to today.
   - Link `onExit` with an error shows that error's display message.
 - **Sweep:** idempotent under concurrency (row lock). The price fetch failing is non-fatal.
 - **Webhook:**
