@@ -88,14 +88,18 @@ struct TestPurchaseSheet: View {
             .disabled(submitting != nil)
             .animation(Theme.spring, value: customCents)
             .animation(Theme.spring, value: failure)
+            .sensoryFeedback(.error, trigger: failure) { _, new in new != nil }
             .navigationTitle("Add test purchase")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
+                    // A purchase takes seconds; closing mid-flight would lose its error.
                     Button("Cancel", role: .cancel) { dismiss() }
+                        .disabled(submitting != nil)
                 }
             }
         }
+        .interactiveDismissDisabled(submitting != nil)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
@@ -130,16 +134,24 @@ struct TestPurchaseSheet: View {
         submitting = tag
         failure = nil
         Task {
+            let previous = store.error
             let succeeded = await store.simulatePurchase(merchant: merchant, amountCents: cents)
             submitting = nil
             if succeeded {
                 dismiss()
             } else {
                 // Show the error here, under the sheet's own content, instead of the hidden tab banner.
-                failure = store.error
-                store.error = nil
+                failure = Self.takeFailure(from: store, previous: previous)
             }
         }
+    }
+
+    /// Moves the error a failed purchase just produced out of the store's banner and returns it.
+    /// Any other store error (one already there, or none because the call was cancelled) stays put.
+    static func takeFailure(from store: DropletStore, previous: UserFacingError?) -> UserFacingError? {
+        guard let produced = store.error, produced != previous else { return nil }
+        store.error = nil
+        return produced
     }
 
     /// "5.67" → 567, "12" → 1200, "0.5" → 50. Nil unless 1...100_000 cents with at most 2 decimals.

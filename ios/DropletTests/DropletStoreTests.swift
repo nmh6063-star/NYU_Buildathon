@@ -154,6 +154,32 @@ struct DropletStoreTests {
         #expect(store.isSyncing == false)
     }
 
+    @Test func testPurchaseSheetTakesTheErrorItsPurchaseProduced() async {
+        let store = DropletStore(api: PreviewDropletAPI())
+        await store.load()
+        store.error = UserFacingError(message: "An older banner error.")
+        let previous = store.error
+        let recorded = await store.simulatePurchase(merchant: "", amountCents: 500)
+        #expect(!recorded)
+        let failure = TestPurchaseSheet.takeFailure(from: store, previous: previous)
+        #expect(failure?.code == "BAD_REQUEST")
+        #expect(store.error == nil)
+    }
+
+    @Test func testPurchaseSheetLeavesOtherStoreErrorsAlone() async {
+        let api = PreviewDropletAPI()
+        let store = DropletStore(api: api)
+        await store.load()
+        let banner = UserFacingError(message: "An older banner error.")
+        store.error = banner
+        // A cancelled purchase fails without producing an error of its own.
+        await api.fail(next: CancellationError())
+        let recorded = await store.simulatePurchase(merchant: "Blue Bottle", amountCents: 567)
+        #expect(!recorded)
+        #expect(TestPurchaseSheet.takeFailure(from: store, previous: banner) == nil)
+        #expect(store.error == banner)
+    }
+
     @Test func syncSweepsAfterLoweringThreshold() async {
         let store = DropletStore(api: PreviewDropletAPI())
         await store.load()
