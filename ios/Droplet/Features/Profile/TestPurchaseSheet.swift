@@ -31,6 +31,15 @@ struct TestPurchaseSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                // First, so a failure is visible without scrolling past Presets and Custom.
+                if let failure {
+                    Section {
+                        Label(failure.message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
+                    }
+                }
+
                 Section {
                     ForEach(Self.presets) { preset in
                         Button {
@@ -75,14 +84,6 @@ struct TestPurchaseSheet: View {
                         }
                     }
                     .disabled(!canAddCustom)
-                }
-
-                if let failure {
-                    Section {
-                        Label(failure.message, systemImage: "exclamationmark.triangle.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(.red)
-                    }
                 }
             }
             .disabled(submitting != nil)

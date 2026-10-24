@@ -277,6 +277,7 @@ protocol DropletAPI: Sendable {
   - `login_required` surfaces in Profile and as a banner on Spending.
   - "Reconnect bank" runs a fresh Link session, not Plaid update mode. The new Item replaces the old one, with `linked_on` reset to today.
   - Link `onExit` with an error shows that error's display message.
+  - Plaid rate limits (Sandbox allows only a few test purchases per minute) surface as a friendly `429 RATE_LIMITED` message, not Plaid's raw error text.
 - **Sweep:** idempotent under concurrency (row lock). The price fetch failing is non-fatal.
 - **Webhook:**
   - Invalid signature → `401`.

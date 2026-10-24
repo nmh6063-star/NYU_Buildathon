@@ -1,5 +1,5 @@
 import { assertEquals, assertInstanceOf, assertRejects, assertThrows } from 'jsr:@std/assert@1.0.19'
-import { HttpError } from '../_shared/http.ts'
+import { errorResponse, HttpError } from '../_shared/http.ts'
 import { PlaidApiError, PlaidClient, plaidHttpError, rethrowAsHttp } from '../_shared/plaid.ts'
 
 type Call = { url: string; method?: string; contentType: string | null; body: unknown }
@@ -171,8 +171,54 @@ Deno.test('a non-JSON response throws PlaidApiError', async () => {
 Deno.test('plaidHttpError maps login-required to 409 and the rest to 502', () => {
   const login = plaidHttpError(new PlaidApiError('ITEM_LOGIN_REQUIRED', 'ITEM_ERROR', 'm', 400))
   assertEquals([login.status, login.code], [409, 'ITEM_LOGIN_REQUIRED'])
-  const other = plaidHttpError(new PlaidApiError('RATE_LIMIT_EXCEEDED', 'RATE_LIMIT', 'slow', 429))
-  assertEquals([other.status, other.code, other.message], [502, 'PLAID_ERROR', 'slow'])
+  const other = plaidHttpError(
+    new PlaidApiError('INVALID_FIELD', 'INVALID_REQUEST', 'bad field', 400),
+  )
+  assertEquals([other.status, other.code, other.message], [502, 'PLAID_ERROR', 'bad field'])
+})
+
+const RATE_LIMITED_MESSAGE =
+  'Plaid Sandbox allows only a few test purchases per minute. Wait a moment and try again.'
+
+Deno.test('plaidHttpError maps an HTTP 429 from Plaid to 429 RATE_LIMITED', () => {
+  const raw = 'rate limit exceeded for attempts to access "sandbox/transactions/create".'
+  const limited = plaidHttpError(new PlaidApiError('RATE_LIMIT', 'RATE_LIMIT_EXCEEDED', raw, 429))
+  assertEquals(
+    [limited.status, limited.code, limited.message],
+    [429, 'RATE_LIMITED', RATE_LIMITED_MESSAGE],
+  )
+  // Even with no Plaid error body (a bare 429), the status alone is enough.
+  const bare = plaidHttpError(new PlaidApiError('UNKNOWN', 'API_ERROR', 'Plaid failed', 429))
+  assertEquals([bare.status, bare.code], [429, 'RATE_LIMITED'])
+})
+
+Deno.test('plaidHttpError maps error_type RATE_LIMIT_EXCEEDED to 429 whatever the HTTP status', () => {
+  const limited = plaidHttpError(
+    new PlaidApiError('TRANSACTIONS_LIMIT', 'RATE_LIMIT_EXCEEDED', 'slow down', 400),
+  )
+  assertEquals(
+    [limited.status, limited.code, limited.message],
+    [429, 'RATE_LIMITED', RATE_LIMITED_MESSAGE],
+  )
+})
+
+Deno.test('a rate-limited Plaid call surfaces as a friendly 429 in the C1 envelope', async () => {
+  const { client } = fakePlaid([{
+    status: 429,
+    body: {
+      error_type: 'RATE_LIMIT_EXCEEDED',
+      error_code: 'RATE_LIMIT',
+      error_message:
+        'rate limit exceeded for attempts to access "sandbox/transactions/create". please try again later',
+      request_id: 'req-7',
+    },
+  }])
+  const err = await client.sandboxTransactionsCreate('access-test-token', [])
+    .catch(rethrowAsHttp).then(() => null, (e: unknown) => e)
+  assertInstanceOf(err, HttpError)
+  const res = errorResponse(err)
+  assertEquals(res.status, 429)
+  assertEquals(await res.json(), { error: { code: 'RATE_LIMITED', message: RATE_LIMITED_MESSAGE } })
 })
 
 Deno.test('rethrowAsHttp converts PlaidApiError and passes other errors through', () => {

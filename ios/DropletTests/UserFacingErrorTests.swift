@@ -11,6 +11,14 @@ struct UserFacingErrorTests {
         #expect(error.message == "Reconnect your bank to keep rounding up.")
     }
 
+    @Test func decodesPlaidRateLimitAsFriendlyMessage() {
+        let message = "Plaid Sandbox allows only a few test purchases per minute. Wait a moment and try again."
+        let body = Data(#"{"error":{"code":"RATE_LIMITED","message":"\#(message)"}}"#.utf8)
+        let error = UserFacingError.from(FunctionsError.httpError(code: 429, data: body))
+        #expect(error.code == "RATE_LIMITED")
+        #expect(error.message == message)
+    }
+
     @Test func undecodableFunctionErrorFallsBackToStatus() {
         let error = UserFacingError.from(FunctionsError.httpError(code: 502, data: Data("Bad Gateway".utf8)))
         #expect(error.code == nil)

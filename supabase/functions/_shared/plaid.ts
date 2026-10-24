@@ -15,10 +15,24 @@ export class PlaidApiError extends Error {
   }
 }
 
-/** Contract C1 mapping: ITEM_LOGIN_REQUIRED → 409, any other Plaid error → 502 PLAID_ERROR. */
+/** Shown for any Plaid rate limit; the Sandbox test-purchase endpoint is the one users hit. */
+const RATE_LIMITED_MESSAGE =
+  'Plaid Sandbox allows only a few test purchases per minute. Wait a moment and try again.'
+
+function isRateLimit(err: PlaidApiError): boolean {
+  return err.status === 429 || err.errorType === 'RATE_LIMIT_EXCEEDED'
+}
+
+/**
+ * Contract C1 mapping: ITEM_LOGIN_REQUIRED → 409, a Plaid rate limit → 429 RATE_LIMITED,
+ * any other Plaid error → 502 PLAID_ERROR.
+ */
 export function plaidHttpError(err: PlaidApiError): HttpError {
   if (err.errorCode === 'ITEM_LOGIN_REQUIRED') {
     return new HttpError(409, 'ITEM_LOGIN_REQUIRED', 'Your bank needs you to sign in again.')
+  }
+  if (isRateLimit(err)) {
+    return new HttpError(429, 'RATE_LIMITED', RATE_LIMITED_MESSAGE)
   }
   return new HttpError(502, 'PLAID_ERROR', err.message)
 }
