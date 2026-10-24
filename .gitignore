@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+**/keys*.json
+**/keystuff*.json
+supabase/functions/.env
+supabase/.temp/
+supabase/.branches/
+ios/Droplet/Resources/Config.xcconfig
+
+# Xcode
+ios/*.xcodeproj/
+ios/DerivedData/
+ios/build/
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+.build/
+
+# macOS
+.DS_Store
